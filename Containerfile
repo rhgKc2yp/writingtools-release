@@ -22,6 +22,9 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install -r source/Windows_and_Linux/requirements.txt \
     && python -m pip check
 
-COPY scripts/build-in-container.sh scripts/smoke-hook.py /build/scripts/
+# The minimal Fedora image suppresses %doc files, including libXmu's notice.
+RUN dnf reinstall -y --setopt=tsflags= libXmu && dnf clean all
+
+COPY scripts/build-in-container.sh scripts/smoke-hook.py scripts/writing-tools-launcher /build/scripts/
 RUN bash /build/scripts/build-in-container.sh
 CMD ["bash", "-c", "cp -a /artifacts/. /output/"]

@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+bundle=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+state="${XDG_DATA_HOME:-$HOME/.local/share}/writing-tools"
+umask 077
+mkdir -p "$state"
+
+# Upstream stores config/options beside sys.argv[0]. Run an unchanged copy of
+# the small bootloader from private persistent data; libraries/assets remain
+# read-only in the installed bundle. Never replace the user's settings.
+if ! cmp -s "$bundle/writing-tools" "$state/writing-tools"; then
+    staged=$(mktemp "$state/.writing-tools.XXXXXX")
+    trap 'rm -f "$staged"' EXIT HUP INT TERM
+    cp "$bundle/writing-tools" "$staged"
+    chmod 700 "$staged"
+    mv -f "$staged" "$state/writing-tools"
+    trap - EXIT HUP INT TERM
+fi
+for asset in _internal icons background.png background_dark.png background_popup.png background_popup_dark.png; do
+    ln -sfn "$bundle/$asset" "$state/$asset"
+done
+if [ ! -e "$state/options.json" ]; then
+    cp "$bundle/options.json" "$state/options.json"
+fi
+
+# pynput and xclip use X11. This leaves explicit user overrides in control.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+export PATH="$bundle/bin:$PATH"
+export LD_LIBRARY_PATH="$bundle/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cd "$state"
+exec "$state/writing-tools" "$@"
