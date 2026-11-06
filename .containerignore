@@ -1,0 +1,5 @@
+*
+!Containerfile
+!scripts
+!scripts/build-in-container.sh
+!scripts/smoke-hook.py

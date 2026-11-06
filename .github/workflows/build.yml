@@ -1,0 +1,44 @@
+name: Build Writing Tools with Podman (Fedora 45)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream commit, tag or branch (empty uses upstream-ref.txt)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          podman --version
+      - name: Build and smoke-test in Fedora 45
+        env:
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+        run: bash scripts/build.sh
+      - name: Upload binary, source and checksums
+        uses: actions/upload-artifact@v7
+        with:
+          name: writing-tools-fedora45-x86_64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
