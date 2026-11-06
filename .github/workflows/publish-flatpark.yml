@@ -1,0 +1,133 @@
+name: Release for Flatpark
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: New immutable release tag, for example v2026.11.06-1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate release tag
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+          REF_TAG: ${{ github.ref_name }}
+        run: |
+          tag="${INPUT_TAG:-$REF_TAG}"
+          [[ "$tag" =~ ^v[0-9][A-Za-z0-9._-]*$ ]] || { echo 'Invalid release tag'; exit 1; }
+          if [[ "$GITHUB_REF" != "refs/tags/$tag" ]] && \
+              [[ -n "$(git ls-remote origin "refs/tags/$tag")" ]]; then
+            echo 'Manual releases require a new tag; existing tags must run from a tag push.'
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Check package generator integrity
+        run: python3 -m unittest discover -s tests -v
+      - name: Install build and runtime test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman flatpak xvfb xauth dbus-daemon
+          # Flatpak needs user namespaces on this disposable GitHub runner.
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub org.freedesktop.Platform//26.08
+      - name: Build unmodified application in Fedora 45
+        run: bash scripts/build.sh
+      - name: Check bundle on Flatpark runtime
+        run: dbus-run-session -- xvfb-run -a bash scripts/check-flatpak.sh
+      - name: Record release provenance
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('dist/release.json').write_text(json.dumps({
+              'tag': os.environ['RELEASE_TAG'],
+              'build_repository': os.environ['GITHUB_REPOSITORY'],
+              'build_commit': os.environ['GITHUB_SHA'],
+              'upstream_repository': 'theJayTea/WritingTools',
+              'upstream_commit': Path('dist/upstream-commit.txt').read_text().strip(),
+              'runtime': 'org.freedesktop.Platform//26.08',
+              'arch': 'x86_64'
+          }, indent=2) + '\n')
+          PY
+          git archive --format=tar.gz --output=dist/writingtools-release-source.tar.gz HEAD
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flatpark-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: flatpark-release
+          path: dist
+      - name: Publish versioned GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          (cd dist && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release = json.loads(Path('dist/release.json').read_text())
+          Path('release-notes.md').write_text(
+              'Independent Linux build of Writing Tools for Flatpark.\n\n'
+              f"Upstream commit: `{release['upstream_commit']}`\n\n"
+              f"Build recipe: https://github.com/{os.environ['GH_REPO']}/tree/{release['build_commit']}\n\n"
+              'Built with Podman/Fedora 45; checked on Freedesktop 26.08. '
+              'Includes bundled Qt, Python, xclip and their build provenance. '
+              'Launch with `writing-tools/writing-tools-launcher`. '
+              'Global hotkeys and text replacement require X11; native Wayland apps are not supported.\n\n'
+              'Report packaging issues to this build repository. '
+              'Flatpark availability requires a reviewed catalog listing.\n')
+          PY
+          # Deliberately create rather than edit: never replace a pinned release's bytes.
+          gh release create "$RELEASE_TAG" dist/* \
+            --target "$GITHUB_SHA" --title "Writing Tools $RELEASE_TAG" \
+            --notes-file release-notes.md --latest
+
+  flatpark:
+    needs: [build, release]
+    # Enable after the reviewed listing uses this repository as source_url.
+    if: vars.FLATPARK_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-26.04
+    continue-on-error: true
+    steps:
+      - uses: flatpark/publish-action@v1
+        with:
+          app-id: io.github.theJayTea.WritingTools
+          tag: ${{ needs.build.outputs.tag }}

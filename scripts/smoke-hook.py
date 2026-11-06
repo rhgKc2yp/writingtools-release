@@ -14,5 +14,14 @@ if os.environ.get("WRITING_TOOLS_SMOKE_TEST") == "1":
     assert (root / "options.json").is_file()
     assert (Path(sys._MEIPASS) / "locales").is_dir()
     assert not QPixmap(str(root / "background.png")).isNull()
-    print("Frozen Writing Tools imports, Qt and assets passed.", flush=True)
+    import pyperclip
+
+    sample = "Writing Tools clipboard check — ✓"
+    pyperclip.copy(sample)
+    assert pyperclip.paste() == sample
+    # The launcher must provide a writable persistent directory for settings.
+    probe = root / ".write-check"
+    probe.write_text("ok")
+    probe.unlink()
+    print("Frozen imports, Qt, assets, clipboard and writable state passed.", flush=True)
     sys.exit(0)
