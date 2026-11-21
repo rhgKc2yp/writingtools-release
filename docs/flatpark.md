@@ -39,7 +39,7 @@ not create a catalog listing.
 
 Subsequent releases notify Flatpark after uploading all assets. Notification
 failure does not fail the GitHub release. To retry a notification, run
-`flatpark/publish-action@v1` with the existing tag; do not rebuild or replace
+the FlatPark publish-action step with the existing tag; do not rebuild or replace
 published files under that tag.
 
 ## Package behavior
